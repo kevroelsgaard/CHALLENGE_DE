@@ -1,0 +1,161 @@
+view: aaa_sd_si_agg_search_insights_metrics_daily {
+  derived_table: {
+    sql: WITH
+      daily_search_count AS (
+        SELECT
+          country_channel_code,
+          {% if channel_id_filter._is_filtered %}
+            {{ channel_id_filter._parameter_value }} as channel_id,
+          {% else %}
+            ' ' as channel_id,
+          {% endif %}
+          __time AS date_key,
+          content_title,
+          CASE WHEN release_year IS NULL THEN '' ELSE release_year END AS release_year,
+          SUM(
+              {% if event_type._parameter_value == 'impressions_count' %}
+                impressions_count
+              {% elsif event_type._parameter_value == 'focus_count' %}
+                focus_count
+              {% elsif event_type._parameter_value == 'clicks_count' %}
+                clicks_count
+              {% else %}
+                launch_count
+              {% endif %}
+              ) AS search_count
+        FROM agg_search_insights_content_metrics
+        WHERE
+          __time >= TIMESTAMPADD(day, -7, {% date_end date_filter %})
+          AND __time < {% date_end date_filter %}
+          AND __time >= {% date_start date_filter %}
+          AND {% condition country_channel_code %} country_channel_code {% endcondition %}
+          AND {% condition content_title %} content_title {% endcondition %}
+          AND {% condition release_year %} release_year {% endcondition %}
+          {% if channel_id_filter._is_filtered %}
+            AND REGEXP_LIKE(available_channel_ids, CONCAT('.*', {{ channel_id_filter._parameter_value }}, '.*'))
+          {% else %}
+          {% endif %}
+          AND content_title != ''
+          AND {% condition content_type %} content_type {% endcondition %}
+        GROUP BY 1,2,3,4,5
+      ),
+      
+      top_daily_content AS (
+        SELECT *
+        FROM daily_search_count
+        ORDER BY country_channel_code, date_key, search_count DESC
+        LIMIT {{ top_n_contents._parameter_value }} * 1000
+      )
+
+      SELECT
+        a.country_channel_code,
+        {% if channel_id_filter._is_filtered %}
+          {{ channel_id_filter._parameter_value }} as channel_id,
+        {% else %}
+          ' ' as channel_id,
+        {% endif %}
+        a.date_key,
+        a.content_title,
+        a.release_year,
+        a.search_count,
+        COUNT(b.search_count) as ranking
+      FROM top_daily_content a
+      JOIN top_daily_content b 
+        ON a.country_channel_code = b.country_channel_code 
+        AND a.date_key = b.date_key
+      WHERE b.search_count >= a.search_count
+      GROUP BY 1,2,3,4,5,6
+      HAVING COUNT(b.search_count) <= {{ top_n_contents._parameter_value }}
+    ;;
+  }
+
+  filter: date_filter {
+    type: date
+  }
+
+  filter: content_type {
+    label: "Content Type"
+    type: string
+  }
+
+  parameter: channel_id_filter {
+    type:  string
+    label: "Channel ID Filter"
+  }
+
+  parameter: top_n_contents {
+    type:  number
+    label: "Top N Contents"
+  }
+
+  parameter: event_type {
+    type: unquoted
+    allowed_value: {
+      label: "Impression"
+      value: "impressions_count"
+    }
+    allowed_value: {
+      label: "Focus"
+      value: "focus_count"
+    }
+    allowed_value: {
+      label: "Click"
+      value: "clicks_count"
+    }
+    allowed_value: {
+      label: "Launch"
+      value: "launch_count"
+    }
+  }
+
+  dimension_group: date {
+    label: ""
+    type: time
+    timeframes: [ date ]
+    sql: ${TABLE}.date_key;;
+  }
+
+  dimension: country_channel_code {
+    label: "Market"
+    type: string
+    sql: ${TABLE}.country_channel_code;;
+  }
+
+  dimension: channel_id {
+    label: "Channel ID"
+    type: string
+    sql: ${TABLE}.channel_id;;
+  }
+
+  dimension: content_title {
+    label: "Content Title"
+    type: string
+    sql: ${TABLE}.content_title;;
+  }
+
+  dimension: release_year {
+    label: "Release Year"
+    type: string
+    sql: ${TABLE}.release_year;;
+  }
+
+  measure: search_count {
+    label:
+    "{% if event_type._parameter_value == 'impressions_count' %} Impressions Count
+    {% elsif event_type._parameter_value == 'focus_count' %} Focus Count
+    {% elsif event_type._parameter_value == 'clicks_count' %} Clicks Count
+    {% elsif event_type._parameter_value == 'launch_count' %} Launch Count
+    {% else %} Search Count
+    {% endif %}"
+    type: number
+    can_filter: no
+    sql: ANY_VALUE(${TABLE}.search_count);;
+  }
+
+  measure: ranking {
+    label: "Ranking"
+    type: number
+    sql: ANY_VALUE(${TABLE}.ranking);;
+  }
+
+}
