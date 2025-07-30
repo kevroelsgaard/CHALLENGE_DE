@@ -9,7 +9,7 @@ view: aaa_sd_si_agg_search_insights_metrics_daily {
           {% else %}
             ' ' as channel_id,
           {% endif %}
-          DATE_TRUNC('day', __time) AS date_key,
+          __time AS date_key,
           content_title,
           CASE WHEN release_year IS NULL THEN '' ELSE release_year END AS release_year,
           SUM(
